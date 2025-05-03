@@ -1,0 +1,433 @@
+package protect
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
+
+type SimpleStruct struct {
+	ID   string `protectfor:"create,update"`
+	Code string `protectfor:"update"`
+	Name string
+}
+
+type NestedStruct struct {
+	ID     string `protectfor:"create,update"`
+	Parent *SimpleStruct
+	Child  SimpleStruct
+}
+
+type SliceStruct struct {
+	ID      string `protectfor:"create,update"`
+	Names   []string
+	Numbers []int
+}
+
+type MatchSlice []SimpleStruct
+type LongerSlice []SimpleStruct
+type ShorterSlice []SimpleStruct
+
+type SliceWithOptions struct {
+	ID        string `protectfor:"create,update"`
+	Items     []SimpleStruct
+	LongList  []SimpleStruct
+	ShortList []SimpleStruct
+	MapItems  map[string]SimpleStruct
+	MapMatch  map[string]SimpleStruct
+}
+
+func TestCopy(t *testing.T) {
+	t.Run("simple struct", func(t *testing.T) {
+		src := SimpleStruct{
+			ID:   "123",
+			Code: "ABC",
+			Name: "Test",
+		}
+
+		t.Run("create tag", func(t *testing.T) {
+			dst := SimpleStruct{}
+
+			err := Copy("create", &src, &dst)
+			assert.NoError(t, err)
+
+			// ID should be protected
+			assert.Empty(t, dst.ID)
+			assert.Equal(t, src.Code, dst.Code)
+			assert.Equal(t, src.Name, dst.Name)
+		})
+
+		t.Run("update tag", func(t *testing.T) {
+			dst := SimpleStruct{}
+
+			err := Copy("update", &src, &dst)
+			assert.NoError(t, err)
+
+			// ID and Code should be protected
+			assert.Empty(t, dst.ID)
+			assert.Empty(t, dst.Code)
+			assert.Equal(t, src.Name, dst.Name)
+		})
+
+		t.Run("no tag", func(t *testing.T) {
+			dst := SimpleStruct{}
+
+			err := Copy("", &src, &dst)
+			assert.NoError(t, err)
+
+			// All fields should be copied
+			assert.Equal(t, src.ID, dst.ID)
+			assert.Equal(t, src.Code, dst.Code)
+			assert.Equal(t, src.Name, dst.Name)
+		})
+	})
+
+	t.Run("nested struct", func(t *testing.T) {
+		src := NestedStruct{
+			ID: "123",
+			Parent: &SimpleStruct{
+				ID:   "parent-123",
+				Code: "parent-ABC",
+				Name: "Parent",
+			},
+			Child: SimpleStruct{
+				ID:   "child-123",
+				Code: "child-ABC",
+				Name: "Child",
+			},
+		}
+
+		t.Run("create tag", func(t *testing.T) {
+			dst := NestedStruct{}
+
+			err := Copy("create", &src, &dst)
+			assert.NoError(t, err)
+
+			// NestedStruct.ID should be protected
+			assert.Empty(t, dst.ID)
+
+			// Parent should be deep-copied
+			assert.NotNil(t, dst.Parent)
+			assert.Empty(t, dst.Parent.ID) // ID is protected
+			assert.Equal(t, src.Parent.Code, dst.Parent.Code)
+			assert.Equal(t, src.Parent.Name, dst.Parent.Name)
+
+			// Child should be deep-copied
+			assert.Empty(t, dst.Child.ID) // ID is protected
+			assert.Equal(t, src.Child.Code, dst.Child.Code)
+			assert.Equal(t, src.Child.Name, dst.Child.Name)
+		})
+	})
+
+	t.Run("slice", func(t *testing.T) {
+		src := SliceStruct{
+			ID:      "123",
+			Names:   []string{"Alice", "Bob", "Charlie"},
+			Numbers: []int{1, 2, 3},
+		}
+
+		t.Run("create tag", func(t *testing.T) {
+			dst := SliceStruct{}
+
+			err := Copy("create", &src, &dst)
+			assert.NoError(t, err)
+
+			// ID should be protected
+			assert.Empty(t, dst.ID)
+
+			// Slices should be deep-copied
+			assert.Equal(t, src.Names, dst.Names)
+			assert.Equal(t, src.Numbers, dst.Numbers)
+
+			// Verify that modifying destination doesn't affect source
+			srcNames := src.Names
+			dstNames := make([]string, len(dst.Names))
+			copy(dstNames, dst.Names)
+			dstNames[0] = "Modified"
+
+			assert.Equal(t, "Alice", srcNames[0])
+			assert.NotEqual(t, dstNames[0], src.Names[0])
+		})
+	})
+}
+
+func TestClone(t *testing.T) {
+	src := SimpleStruct{
+		ID:   "123",
+		Code: "ABC",
+		Name: "Test",
+	}
+
+	cloned := Clone(&src).(*SimpleStruct)
+
+	// All fields should be copied
+	assert.Equal(t, src.ID, cloned.ID)
+	assert.Equal(t, src.Code, cloned.Code)
+	assert.Equal(t, src.Name, cloned.Name)
+
+	// Verify that modifying source doesn't affect clone
+	src.Name = "Modified"
+	assert.NotEqual(t, src.Name, cloned.Name)
+}
+
+// 新しいカスタムProtectorを作成してテスト用のタグを設定
+func createTestProtector() *Protector {
+	p := NewProtector("protectfor", "protectopt")
+	return p
+}
+
+func TestSliceOptions(t *testing.T) {
+	simpleItems := []SimpleStruct{
+		{ID: "1", Code: "A", Name: "First"},
+		{ID: "2", Code: "B", Name: "Second"},
+	}
+
+	t.Run("overwrite option", func(t *testing.T) {
+		p := createTestProtector()
+
+		src := SliceWithOptions{
+			Items: simpleItems,
+		}
+
+		dst := SliceWithOptions{
+			Items: []SimpleStruct{
+				{ID: "X", Code: "Y", Name: "Existing"},
+				{ID: "Z", Code: "W", Name: "Another"},
+				{ID: "Extra", Code: "Extra", Name: "Extra"},
+			},
+		}
+
+		// デフォルトでは overwrite なので特に設定は不要
+
+		err := p.Copy("create", &src, &dst)
+		assert.NoError(t, err)
+
+		// Length should match the source length (2 items)
+		assert.Equal(t, len(src.Items), len(dst.Items))
+
+		// In overwrite mode, tags are ignored - simple clone instead
+		assert.Equal(t, src.Items[0].ID, dst.Items[0].ID) // ID is not protected in overwrite mode
+		assert.Equal(t, src.Items[0].Code, dst.Items[0].Code)
+		assert.Equal(t, src.Items[0].Name, dst.Items[0].Name)
+	})
+
+	t.Run("match option", func(t *testing.T) {
+		p := createTestProtector()
+
+		src := SliceWithOptions{
+			Items: simpleItems,
+		}
+
+		dst := SliceWithOptions{
+			Items: []SimpleStruct{
+				{ID: "X", Code: "Y", Name: "Existing"},
+				{ID: "Z", Code: "W", Name: "Another"},
+				{ID: "Extra", Code: "Extra", Name: "Extra"},
+			},
+		}
+
+		// スライスに対するオプションをオーバーライドして設定
+		p.setSliceOption(dst.Items, "match")
+
+		// このテストでは明示的に create タグを指定
+		err := p.Copy("create", &src, &dst)
+		assert.NoError(t, err)
+
+		// Length should match the source length (2 items)
+		assert.Equal(t, len(src.Items), len(dst.Items))
+
+		// Items should be deep copied with original ID preserved
+		assert.Equal(t, "X", dst.Items[0].ID) // ID from destination is preserved
+		assert.Equal(t, src.Items[0].Code, dst.Items[0].Code)
+		assert.Equal(t, src.Items[0].Name, dst.Items[0].Name)
+	})
+
+	t.Run("longer option", func(t *testing.T) {
+		p := createTestProtector()
+
+		src := SliceWithOptions{
+			LongList: simpleItems,
+		}
+
+		dst := SliceWithOptions{
+			LongList: []SimpleStruct{
+				{ID: "X", Code: "Y", Name: "Existing"},
+				{ID: "Z", Code: "W", Name: "Another"},
+				{ID: "Extra", Code: "Extra", Name: "Extra"},
+			},
+		}
+
+		originalLength := len(dst.LongList)
+
+		// スライスに対するオプションをオーバーライドして設定
+		p.setSliceOption(dst.LongList, "longer")
+
+		// このテストでは明示的に create タグを指定
+		err := p.Copy("create", &src, &dst)
+		assert.NoError(t, err)
+
+		// Length should not be changed since destination is longer
+		assert.Equal(t, originalLength, len(dst.LongList))
+
+		// First two items should be copied but ID preserved
+		assert.Equal(t, "X", dst.LongList[0].ID) // Original ID is preserved
+		assert.Equal(t, src.LongList[0].Code, dst.LongList[0].Code)
+		assert.Equal(t, src.LongList[0].Name, dst.LongList[0].Name)
+
+		assert.Equal(t, "Z", dst.LongList[1].ID) // Original ID is preserved
+		assert.Equal(t, src.LongList[1].Code, dst.LongList[1].Code)
+		assert.Equal(t, src.LongList[1].Name, dst.LongList[1].Name)
+
+		// Third item should remain unchanged
+		assert.Equal(t, "Extra", dst.LongList[2].ID)
+	})
+
+	t.Run("shorter option", func(t *testing.T) {
+		p := createTestProtector()
+
+		src := SliceWithOptions{
+			ShortList: []SimpleStruct{
+				{ID: "1", Code: "A", Name: "First"},
+				{ID: "2", Code: "B", Name: "Second"},
+				{ID: "3", Code: "C", Name: "Third"},
+				{ID: "4", Code: "D", Name: "Fourth"},
+			},
+		}
+
+		dst := SliceWithOptions{
+			ShortList: []SimpleStruct{
+				{ID: "X", Code: "Y", Name: "Existing"},
+				{ID: "Z", Code: "W", Name: "Another"},
+			},
+		}
+
+		originalLength := len(dst.ShortList)
+
+		// スライスに対するオプションをオーバーライドして設定
+		p.setSliceOption(dst.ShortList, "shorter")
+
+		// このテストでは明示的に create タグを指定
+		err := p.Copy("create", &src, &dst)
+		assert.NoError(t, err)
+
+		// Only copy as many items as the destination has
+		assert.Equal(t, originalLength, len(dst.ShortList))
+
+		// Items should be copied but ID preserved
+		assert.Equal(t, "X", dst.ShortList[0].ID) // Original ID is preserved
+		assert.Equal(t, src.ShortList[0].Code, dst.ShortList[0].Code)
+		assert.Equal(t, src.ShortList[0].Name, dst.ShortList[0].Name)
+
+		assert.Equal(t, "Z", dst.ShortList[1].ID) // Original ID is preserved
+		assert.Equal(t, src.ShortList[1].Code, dst.ShortList[1].Code)
+		assert.Equal(t, src.ShortList[1].Name, dst.ShortList[1].Name)
+	})
+}
+
+func TestMapOptions(t *testing.T) {
+	simpleMap := map[string]SimpleStruct{
+		"first":  {ID: "1", Code: "A", Name: "First"},
+		"second": {ID: "2", Code: "B", Name: "Second"},
+	}
+
+	t.Run("overwrite option", func(t *testing.T) {
+		p := createTestProtector()
+
+		src := SliceWithOptions{
+			MapItems: simpleMap,
+		}
+
+		dst := SliceWithOptions{
+			MapItems: map[string]SimpleStruct{
+				"first": {ID: "X", Code: "Y", Name: "Existing"},
+				"third": {ID: "3", Code: "C", Name: "Third"},
+			},
+		}
+
+		// デフォルトでは overwrite なので特に設定は不要
+
+		err := p.Copy("create", &src, &dst)
+		assert.NoError(t, err)
+
+		// Should replace the map (overwrite everything)
+		assert.Equal(t, len(src.MapItems), len(dst.MapItems))
+		assert.Contains(t, dst.MapItems, "first")
+		assert.Contains(t, dst.MapItems, "second")
+		assert.NotContains(t, dst.MapItems, "third") // Third item should be gone
+
+		// In overwrite mode, tags are ignored - simple clone instead
+		assert.Equal(t, src.MapItems["first"].ID, dst.MapItems["first"].ID) // ID is not protected
+		assert.Equal(t, src.MapItems["first"].Code, dst.MapItems["first"].Code)
+		assert.Equal(t, src.MapItems["first"].Name, dst.MapItems["first"].Name)
+	})
+
+	t.Run("patch option", func(t *testing.T) {
+		p := createTestProtector()
+
+		src := SliceWithOptions{
+			MapItems: simpleMap,
+		}
+
+		dst := SliceWithOptions{
+			MapItems: map[string]SimpleStruct{
+				"first": {ID: "X", Code: "Y", Name: "Existing"},
+				"third": {ID: "3", Code: "C", Name: "Third"},
+			},
+		}
+
+		// マップに対するオプションをオーバーライドして設定
+		p.setMapOption(dst.MapItems, "patch")
+
+		// このテストでは明示的に create タグを指定
+		err := p.Copy("create", &src, &dst)
+		assert.NoError(t, err)
+
+		// Should patch the map (add or update, but not remove)
+		assert.Equal(t, 3, len(dst.MapItems))
+
+		// first item should be updated but ID preserved
+		assert.Equal(t, "X", dst.MapItems["first"].ID) // Original ID is preserved
+		assert.Equal(t, src.MapItems["first"].Code, dst.MapItems["first"].Code)
+		assert.Equal(t, src.MapItems["first"].Name, dst.MapItems["first"].Name)
+
+		// second item should be added (and since it's new, it's simple clone without tag protection)
+		assert.Contains(t, dst.MapItems, "second")
+		assert.Equal(t, src.MapItems["second"].ID, dst.MapItems["second"].ID) // New items are simple-cloned
+
+		// third item should be preserved
+		assert.Contains(t, dst.MapItems, "third")
+	})
+
+	t.Run("match option", func(t *testing.T) {
+		p := createTestProtector()
+
+		src := SliceWithOptions{
+			MapMatch: simpleMap,
+		}
+
+		dst := SliceWithOptions{
+			MapMatch: map[string]SimpleStruct{
+				"first": {ID: "X", Code: "Y", Name: "Existing"},
+				"third": {ID: "3", Code: "C", Name: "Third"},
+			},
+		}
+
+		// マップに対するオプションをオーバーライドして設定
+		p.setMapOption(dst.MapMatch, "match")
+
+		// このテストでは明示的に create タグを指定
+		err := p.Copy("create", &src, &dst)
+		assert.NoError(t, err)
+
+		// Should make the destination match the source (same keys)
+		assert.Equal(t, len(src.MapMatch), len(dst.MapMatch))
+		assert.Contains(t, dst.MapMatch, "first")
+		assert.Contains(t, dst.MapMatch, "second")
+		assert.NotContains(t, dst.MapMatch, "third")
+
+		// first item should be updated but ID preserved
+		assert.Equal(t, "X", dst.MapMatch["first"].ID) // Original ID is preserved
+		assert.Equal(t, src.MapMatch["first"].Code, dst.MapMatch["first"].Code)
+		assert.Equal(t, src.MapMatch["first"].Name, dst.MapMatch["first"].Name)
+	})
+}
