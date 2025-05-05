@@ -145,7 +145,7 @@ func TestBindSlice(t *testing.T) {
 	t.Run("Match option", func(t *testing.T) {
 		// Set up Echo and the request
 		e := echo.New()
-		reqBody := `{"items":[{"id":"123", "code":"ABC", "name":"Test1"},{"id":"456", "code":"DEF", "name":"Test2"}]}`
+		reqBody := `[{"id":"123", "code":"ABC", "name":"Test1"},{"id":"456", "code":"DEF", "name":"Test2"}]`
 		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(reqBody))
 		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 		rec := httptest.NewRecorder()
@@ -219,7 +219,7 @@ func TestBindSlice(t *testing.T) {
 	t.Run("Shorter option", func(t *testing.T) {
 		// Set up Echo and the request
 		e := echo.New()
-		reqBody := `{"data":[{"id":"123", "code":"ABC", "name":"Test1"},{"id":"456", "code":"DEF", "name":"Test2"},{"id":"789", "code":"GHI", "name":"Test3"}]}`
+		reqBody := `[{"id":"123", "code":"ABC", "name":"Test1"},{"id":"456", "code":"DEF", "name":"Test2"},{"id":"789", "code":"GHI", "name":"Test3"}]`
 		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(reqBody))
 		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 		rec := httptest.NewRecorder()
