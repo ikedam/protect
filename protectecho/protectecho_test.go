@@ -104,3 +104,181 @@ func TestReBindableIdempotent(t *testing.T) {
 	// Check that ReBindable is idempotent
 	assert.Same(t, c1, c2)
 }
+
+type TestSliceStruct struct {
+	Items []TestStruct `json:"items"`
+}
+
+func TestBindSlice(t *testing.T) {
+	t.Run("Overwrite option", func(t *testing.T) {
+		// Set up Echo and the request
+		e := echo.New()
+		reqBody := `[{"id":"123", "code":"ABC", "name":"Test1"},{"id":"456", "code":"DEF", "name":"Test2"}]`
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(reqBody))
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		// Create destination with pre-existing content
+		dst := []TestStruct{
+			{ID: "existing", Code: "existing", Name: "existing"},
+			{ID: "existing2", Code: "existing2", Name: "existing2"},
+			{ID: "existing3", Code: "existing3", Name: "existing3"},
+		}
+
+		// Make context rebindable
+		c = ReBindable(c)
+
+		// Bind with "overwrite" option
+		err := BindSlice("create", c, &dst, "overwrite")
+		assert.NoError(t, err)
+
+		// Verify results
+		assert.Equal(t, 2, len(dst)) // Length should match source
+
+		// In overwrite, tags should be ignored
+		assert.Equal(t, "123", dst[0].ID) // ID is not protected in overwrite mode
+		assert.Equal(t, "ABC", dst[0].Code)
+		assert.Equal(t, "Test1", dst[0].Name)
+	})
+
+	t.Run("Match option", func(t *testing.T) {
+		// Set up Echo and the request
+		e := echo.New()
+		reqBody := `{"items":[{"id":"123", "code":"ABC", "name":"Test1"},{"id":"456", "code":"DEF", "name":"Test2"}]}`
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(reqBody))
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		// Create destination with pre-existing content
+		dst := []TestStruct{
+			{ID: "existing", Code: "existing", Name: "existing"},
+			{ID: "existing2", Code: "existing2", Name: "existing2"},
+			{ID: "existing3", Code: "existing3", Name: "existing3"},
+		}
+
+		// Make context rebindable
+		c = ReBindable(c)
+
+		// Bind with "match" option
+		err := BindSlice("create", c, &dst, "match")
+		assert.NoError(t, err)
+
+		// Verify results
+		assert.Equal(t, 2, len(dst)) // Length should match source
+
+		// ID should be protected
+		assert.Equal(t, "existing", dst[0].ID) // ID is preserved
+		assert.Equal(t, "ABC", dst[0].Code)
+		assert.Equal(t, "Test1", dst[0].Name)
+
+		assert.Equal(t, "existing2", dst[1].ID) // ID is preserved
+		assert.Equal(t, "DEF", dst[1].Code)
+		assert.Equal(t, "Test2", dst[1].Name)
+	})
+
+	t.Run("Longer option", func(t *testing.T) {
+		// Set up Echo and the request
+		e := echo.New()
+		reqBody := `[{"id":"123", "code":"ABC", "name":"Test1"}]`
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(reqBody))
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		// Create destination with pre-existing content (longer)
+		dst := []TestStruct{
+			{ID: "existing", Code: "existing", Name: "existing"},
+			{ID: "existing2", Code: "existing2", Name: "existing2"},
+			{ID: "existing3", Code: "existing3", Name: "existing3"},
+		}
+
+		originalLength := len(dst)
+
+		// Make context rebindable
+		c = ReBindable(c)
+
+		// Bind with "longer" option
+		err := BindSlice("create", c, &dst, "longer")
+		assert.NoError(t, err)
+
+		// Verify results
+		assert.Equal(t, originalLength, len(dst)) // Length should remain the same (longer option)
+
+		// First item should be updated with protected fields
+		assert.Equal(t, "existing", dst[0].ID) // ID is preserved
+		assert.Equal(t, "ABC", dst[0].Code)
+		assert.Equal(t, "Test1", dst[0].Name)
+
+		// Other items should remain unchanged
+		assert.Equal(t, "existing2", dst[1].ID)
+		assert.Equal(t, "existing2", dst[1].Code)
+	})
+
+	t.Run("Shorter option", func(t *testing.T) {
+		// Set up Echo and the request
+		e := echo.New()
+		reqBody := `{"data":[{"id":"123", "code":"ABC", "name":"Test1"},{"id":"456", "code":"DEF", "name":"Test2"},{"id":"789", "code":"GHI", "name":"Test3"}]}`
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(reqBody))
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		// Create destination with pre-existing content (shorter)
+		dst := []TestStruct{
+			{ID: "existing", Code: "existing", Name: "existing"},
+			{ID: "existing2", Code: "existing2", Name: "existing2"},
+		}
+
+		originalLength := len(dst)
+
+		// Make context rebindable
+		c = ReBindable(c)
+
+		// Bind with "shorter" option
+		err := BindSlice("create", c, &dst, "shorter")
+		assert.NoError(t, err)
+
+		// Verify results
+		assert.Equal(t, originalLength, len(dst)) // Length should remain the same (shorter option)
+
+		// Items should be updated with protected fields
+		assert.Equal(t, "existing", dst[0].ID) // ID is preserved
+		assert.Equal(t, "ABC", dst[0].Code)
+		assert.Equal(t, "Test1", dst[0].Name)
+
+		assert.Equal(t, "existing2", dst[1].ID) // ID is preserved
+		assert.Equal(t, "DEF", dst[1].Code)
+		assert.Equal(t, "Test2", dst[1].Name)
+
+		// Third item from source should not be copied
+	})
+
+	t.Run("With rebindable context", func(t *testing.T) {
+		// Set up Echo and the request
+		e := echo.New()
+		reqBody := `[{"id":"123", "code":"ABC", "name":"Test1"},{"id":"456", "code":"DEF", "name":"Test2"}]`
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(reqBody))
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		// Make context rebindable
+		c = ReBindable(c)
+
+		// First bind - overwrite
+		dst1 := []TestStruct{{ID: "existing", Code: "existing", Name: "existing"}}
+		err := BindSlice("create", c, &dst1, "overwrite")
+		assert.NoError(t, err)
+		assert.Equal(t, 2, len(dst1))
+		assert.Equal(t, "123", dst1[0].ID) // In overwrite mode, tags are ignored
+
+		// Second bind - match
+		dst2 := []TestStruct{{ID: "existing", Code: "existing", Name: "existing"}}
+		err = BindSlice("create", c, &dst2, "match")
+		assert.NoError(t, err)
+		assert.Equal(t, 2, len(dst2))
+		assert.Equal(t, "existing", dst2[0].ID) // ID is preserved
+	})
+}

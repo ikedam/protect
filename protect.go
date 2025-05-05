@@ -376,55 +376,33 @@ func (p *Protector) copySlice(tag string, src, dst reflect.Value) error {
 			srcElem := src.Index(i)
 			dstElem := dst.Index(i)
 
-			// For other options (not overwrite), respect the tag protection
-			// It's a struct, we should respect the tag protection for fields
-			if srcElem.Kind() == reflect.Struct {
-				structType := srcElem.Type()
-
-				// Create a temporary copy of srcElem
-				tempVal := reflect.New(structType).Elem()
-
-				// First copy all fields from srcElem to tempVal
-				for j := 0; j < structType.NumField(); j++ {
-					field := structType.Field(j)
-					if !field.IsExported() {
-						continue
-					}
-
-					srcField := srcElem.Field(j)
-					tempField := tempVal.Field(j)
-
-					if tempField.CanSet() {
-						tempField.Set(srcField)
-					}
-				}
-
-				// Then copy all fields from dstElem to tempVal for fields that should be protected
-				if tag != "" {
-					for j := 0; j < structType.NumField(); j++ {
-						field := structType.Field(j)
-						if !field.IsExported() {
-							continue
-						}
-
-						tagValue := field.Tag.Get(p.tagName)
-						if isProtected(tagValue, tag) {
-							dstField := dstElem.Field(j)
-							tempField := tempVal.Field(j)
-
-							if tempField.CanSet() && dstField.IsValid() {
-								tempField.Set(dstField)
-							}
-						}
-					}
-				}
-
-				// Finally set dstElem to tempVal
-				dstElem.Set(tempVal)
-			} else {
-				// For non-struct types, just copy directly
+			// Use copyValue recursively to handle different element types properly
+			if i < dstLen {
+				// For existing elements in destination, apply normal protection rules
 				if err := p.copyValue(tag, srcElem, dstElem); err != nil {
 					return err
+				}
+			} else {
+				// For new elements, create with protection
+				if srcElem.Kind() == reflect.Struct {
+					// For struct types, we need special handling to respect protection tags
+					structType := srcElem.Type()
+
+					// Create a new struct
+					newStructVal := reflect.New(structType).Elem()
+
+					// Apply copyStruct to copy fields with protection
+					if err := p.copyStruct(tag, srcElem, newStructVal); err != nil {
+						return err
+					}
+
+					// Set the new struct to the destination element
+					dstElem.Set(newStructVal)
+				} else {
+					// For non-struct types, use simple copy
+					if err := p.copyValue(tag, srcElem, dstElem); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -446,59 +424,14 @@ func (p *Protector) copySlice(tag string, src, dst reflect.Value) error {
 			copyLen = dstLen
 		}
 
+		// Apply same logic as match option for existing elements
 		for i := 0; i < copyLen; i++ {
 			srcElem := src.Index(i)
 			dstElem := dst.Index(i)
 
-			// Apply same logic as in match option
-			if srcElem.Kind() == reflect.Struct {
-				structType := srcElem.Type()
-
-				// Create a temporary copy of srcElem
-				tempVal := reflect.New(structType).Elem()
-
-				// First copy all fields from srcElem to tempVal
-				for j := 0; j < structType.NumField(); j++ {
-					field := structType.Field(j)
-					if !field.IsExported() {
-						continue
-					}
-
-					srcField := srcElem.Field(j)
-					tempField := tempVal.Field(j)
-
-					if tempField.CanSet() {
-						tempField.Set(srcField)
-					}
-				}
-
-				// Then copy all fields from dstElem to tempVal for fields that should be protected
-				if tag != "" {
-					for j := 0; j < structType.NumField(); j++ {
-						field := structType.Field(j)
-						if !field.IsExported() {
-							continue
-						}
-
-						tagValue := field.Tag.Get(p.tagName)
-						if isProtected(tagValue, tag) {
-							dstField := dstElem.Field(j)
-							tempField := tempVal.Field(j)
-
-							if tempField.CanSet() && dstField.IsValid() {
-								tempField.Set(dstField)
-							}
-						}
-					}
-				}
-
-				// Finally set dstElem to tempVal
-				dstElem.Set(tempVal)
-			} else {
-				// For non-struct types, just copy directly
-				if err := p.copyValue(tag, srcElem, dstElem); err != nil {
-					return err
-				}
+			// Use copyValue to properly handle different types with protection rules
+			if err := p.copyValue(tag, srcElem, dstElem); err != nil {
+				return err
 			}
 		}
 	case "shorter":
@@ -513,55 +446,9 @@ func (p *Protector) copySlice(tag string, src, dst reflect.Value) error {
 			srcElem := src.Index(i)
 			dstElem := dst.Index(i)
 
-			// Apply same logic as in match option
-			if srcElem.Kind() == reflect.Struct {
-				structType := srcElem.Type()
-
-				// Create a temporary copy of srcElem
-				tempVal := reflect.New(structType).Elem()
-
-				// First copy all fields from srcElem to tempVal
-				for j := 0; j < structType.NumField(); j++ {
-					field := structType.Field(j)
-					if !field.IsExported() {
-						continue
-					}
-
-					srcField := srcElem.Field(j)
-					tempField := tempVal.Field(j)
-
-					if tempField.CanSet() {
-						tempField.Set(srcField)
-					}
-				}
-
-				// Then copy all fields from dstElem to tempVal for fields that should be protected
-				if tag != "" {
-					for j := 0; j < structType.NumField(); j++ {
-						field := structType.Field(j)
-						if !field.IsExported() {
-							continue
-						}
-
-						tagValue := field.Tag.Get(p.tagName)
-						if isProtected(tagValue, tag) {
-							dstField := dstElem.Field(j)
-							tempField := tempVal.Field(j)
-
-							if tempField.CanSet() && dstField.IsValid() {
-								tempField.Set(dstField)
-							}
-						}
-					}
-				}
-
-				// Finally set dstElem to tempVal
-				dstElem.Set(tempVal)
-			} else {
-				// For non-struct types, just copy directly
-				if err := p.copyValue(tag, srcElem, dstElem); err != nil {
-					return err
-				}
+			// Use copyValue to properly handle different types with protection rules
+			if err := p.copyValue(tag, srcElem, dstElem); err != nil {
+				return err
 			}
 		}
 	default:
@@ -761,4 +648,68 @@ func isProtected(tagValue, tag string) bool {
 	}
 
 	return false
+}
+
+// CopySlice copies values from src to dst slice with the specified option.
+// It specifically handles slice copying with more control than the regular Copy function.
+// The tag value is used to protect fields in slice elements.
+// The option parameter controls how slices are copied and can be one of:
+// - "overwrite": Creates a new slice and copies all elements (default)
+// - "match": Adjusts destination length to match source length
+// - "longer": Keeps destination if longer than source, otherwise extends it
+// - "shorter": Truncates to the shorter of the two slices
+func CopySlice(tag string, src, dst interface{}, option string) error {
+	return DefaultProtector.CopySlice(tag, src, dst, option)
+}
+
+// CopySlice copies values from src to dst slice with the specified option.
+// It specifically handles slice copying with more control than the regular Copy function.
+// The tag value is used to protect fields in slice elements.
+// The option parameter controls how slices are copied and can be one of:
+// - "overwrite": Creates a new slice and copies all elements (default)
+// - "match": Adjusts destination length to match source length
+// - "longer": Keeps destination if longer than source, otherwise extends it
+// - "shorter": Truncates to the shorter of the two slices
+func (p *Protector) CopySlice(tag string, src, dst interface{}, option string) error {
+	if src == nil || dst == nil {
+		return fmt.Errorf("src and dst must not be nil")
+	}
+
+	srcVal := reflect.ValueOf(src)
+	dstVal := reflect.ValueOf(dst)
+
+	// Dereference pointers to get the actual value
+	if srcVal.Kind() == reflect.Ptr {
+		if srcVal.IsNil() {
+			return fmt.Errorf("src must not be nil pointer")
+		}
+		srcVal = srcVal.Elem()
+	}
+
+	if dstVal.Kind() != reflect.Ptr {
+		return fmt.Errorf("dst must be a pointer")
+	}
+
+	if dstVal.IsNil() {
+		return fmt.Errorf("dst must not be nil pointer")
+	}
+
+	dstVal = dstVal.Elem()
+
+	if srcVal.Type() != dstVal.Type() {
+		return fmt.Errorf("src and dst must be the same type, got %s and %s", srcVal.Type(), dstVal.Type())
+	}
+
+	// Ensure both src and dst are slices
+	if srcVal.Kind() != reflect.Slice || dstVal.Kind() != reflect.Slice {
+		return fmt.Errorf("src and dst must be slices, got %s and %s", srcVal.Kind(), dstVal.Kind())
+	}
+
+	// Override slice option for this operation
+	// Save the original option in a temporary variable
+	p.sliceOptions.Store(fmt.Sprintf("%p", dstVal.Interface()), option)
+	defer p.sliceOptions.Delete(fmt.Sprintf("%p", dstVal.Interface()))
+
+	// Use the existing copySlice function with the specified option
+	return p.copySlice(tag, srcVal, dstVal)
 }
