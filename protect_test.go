@@ -2,6 +2,7 @@ package protect
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -35,6 +36,14 @@ type SliceWithOptions struct {
 	ShortList []SimpleStruct
 	MapItems  map[string]SimpleStruct
 	MapMatch  map[string]SimpleStruct
+}
+
+// 時間フィールドを持つ構造体を追加
+type TimeStruct struct {
+	ID        string     `protectfor:"create,update"`
+	CreatedAt time.Time  // 値型のtime.Time
+	UpdatedAt *time.Time // ポインタ型のtime.Time
+	Name      string
 }
 
 func TestCopy(t *testing.T) {
@@ -147,6 +156,41 @@ func TestCopy(t *testing.T) {
 
 			assert.Equal(t, "Alice", srcNames[0])
 			assert.NotEqual(t, dstNames[0], src.Names[0])
+		})
+	})
+
+	t.Run("time fields", func(t *testing.T) {
+		now := time.Now()
+		updatedAt := now.Add(1 * time.Hour)
+
+		src := TimeStruct{
+			ID:        "123",
+			CreatedAt: now,
+			UpdatedAt: &updatedAt,
+			Name:      "Test with time",
+		}
+
+		t.Run("time.Time fields should be copied", func(t *testing.T) {
+			dst := TimeStruct{}
+
+			err := Copy("create", &src, &dst)
+			assert.NoError(t, err)
+
+			// ID should be protected
+			assert.Empty(t, dst.ID)
+
+			// これが現状の動作 (バグの確認): 時間フィールドがコピーされるべきだが、コピーされていない
+			// このテストは失敗することを期待（時間フィールドが正しくコピーされていないため）
+			assert.Equal(t, src.CreatedAt, dst.CreatedAt, "CreatedAt (time.Time) should be copied")
+
+			// ポインタ型のtime.Timeフィールドもコピーされるべきだが、コピーされていない
+			assert.NotNil(t, dst.UpdatedAt, "UpdatedAt (*time.Time) should not be nil")
+			if dst.UpdatedAt != nil {
+				assert.Equal(t, *src.UpdatedAt, *dst.UpdatedAt, "UpdatedAt (*time.Time) values should be equal")
+			}
+
+			// 名前はコピーされているはず
+			assert.Equal(t, src.Name, dst.Name)
 		})
 	})
 }

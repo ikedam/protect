@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Protector is the struct to customize the behavior of protect.
@@ -17,6 +18,9 @@ type Protector struct {
 	// For testing: maps to override options
 	sliceOptions sync.Map
 	mapOptions   sync.Map
+
+	// primitiveStructs is a map to store types that should be treated as primitive values
+	primitiveStructs sync.Map
 }
 
 // DefaultProtector is the default Protector instance used by package level functions.
@@ -24,10 +28,43 @@ var DefaultProtector = NewProtector("protectfor", "protectopt")
 
 // NewProtector creates a new instance of Protector with the specified tag names.
 func NewProtector(tagName, optTagName string) *Protector {
-	return &Protector{
+	p := &Protector{
 		tagName:    tagName,
 		optTagName: optTagName,
 	}
+
+	// Register time.Time as a primitive struct by default
+	p.AddPrimitiveStruct(&time.Time{})
+
+	return p
+}
+
+// AddPrimitiveStruct registers a struct type to be treated as a primitive value when copying.
+// This means the struct will be copied by direct assignment rather than field-by-field.
+func (p *Protector) AddPrimitiveStruct(v interface{}) {
+	t := reflect.TypeOf(v)
+
+	// If it's a pointer, get the underlying type
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	// Only register struct types
+	if t.Kind() == reflect.Struct {
+		p.primitiveStructs.Store(t, true)
+	}
+}
+
+// IsPrimitiveStruct checks if a type should be treated as a primitive value.
+func (p *Protector) IsPrimitiveStruct(t reflect.Type) bool {
+	// If it's a pointer, get the underlying type
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	// Check if it's registered as a primitive struct
+	_, ok := p.primitiveStructs.Load(t)
+	return ok
 }
 
 // Copy copies the values from src to dst excluding fields marked with the tag.
@@ -108,6 +145,15 @@ func (p *Protector) Clone(src interface{}) interface{} {
 // copyValue copies a value from src to dst, respecting protection tags.
 func (p *Protector) copyValue(tag string, src, dst reflect.Value) error {
 	if !src.IsValid() || !dst.IsValid() {
+		return nil
+	}
+
+	// Check if it's a registered primitive struct type
+	if src.Kind() == reflect.Struct && p.IsPrimitiveStruct(src.Type()) {
+		// For primitive structs, treat them like basic types and copy directly
+		if dst.CanSet() {
+			dst.Set(src)
+		}
 		return nil
 	}
 
@@ -253,6 +299,13 @@ func (p *Protector) simpleCloneElement(src reflect.Value) reflect.Value {
 	}
 
 	dst := reflect.New(src.Type()).Elem()
+
+	// Check if it's a registered primitive struct type
+	if src.Kind() == reflect.Struct && p.IsPrimitiveStruct(src.Type()) {
+		// For primitive structs, treat them like basic types and copy directly
+		dst.Set(src)
+		return dst
+	}
 
 	switch src.Kind() {
 	case reflect.Struct:
